@@ -57,7 +57,7 @@ namespace move_base {
     recovery_loader_("nav_core", "nav_core::RecoveryBehavior"),
     planner_plan_(NULL), latest_plan_(NULL), controller_plan_(NULL),
     runPlanner_(false), setup_(false), p_freq_change_(false), c_freq_change_(false), new_global_plan_(false) {
-
+    //as_指向action服务器，当执行as_->start()时调用MoveBase::executeCb函数
     as_ = new MoveBaseActionServer(ros::NodeHandle(), "move_base", [this](auto& goal){ executeCb(goal); }, false);
 
     ros::NodeHandle private_nh("~");
@@ -67,13 +67,21 @@ namespace move_base {
 
     //get some parameters that will be global to the move base node
     std::string global_planner, local_planner;
+    //全局规划器，默认navfn/NavfnROS
     private_nh.param("base_global_planner", global_planner, std::string("navfn/NavfnROS"));
+    //局部规划器，默认TrajectoryPlannerROS
     private_nh.param("base_local_planner", local_planner, std::string("base_local_planner/TrajectoryPlannerROS"));
+    //robot_base_frame，默认base_link
     private_nh.param("global_costmap/robot_base_frame", robot_base_frame_, std::string("base_link"));
+    //global_frame，默认/map坐标系
     private_nh.param("global_costmap/global_frame", global_frame_, std::string("map"));
+    //全局规划器的执行频率，如果为 0 则只有出现新的目标点，才会重新规划
     private_nh.param("planner_frequency", planner_frequency_, 0.0);
+    //运行控制回路并向基座发送速度命令的速率（以 Hz 为单位）
     private_nh.param("controller_frequency", controller_frequency_, 20.0);
+    //进行全局规划的时间间隔，如果超时则认为规划失败
     private_nh.param("planner_patience", planner_patience_, 5.0);
+    //等待控制速度的时间间隔，如果控制速度的发布超过设置时间，则认为局部路径规划失败
     private_nh.param("controller_patience", controller_patience_, 15.0);
     private_nh.param("max_planning_retries", max_planning_retries_, -1);  // disabled by default
 
@@ -84,43 +92,48 @@ namespace move_base {
     private_nh.param("make_plan_clear_costmap", make_plan_clear_costmap_, true);
     private_nh.param("make_plan_add_unreachable_goal", make_plan_add_unreachable_goal_, true);
 
-    //set up plan triple buffer
+    //set up plan triple buffer   初始化三个plan的“缓冲池”数组
     planner_plan_ = new std::vector<geometry_msgs::PoseStamped>();
     latest_plan_ = new std::vector<geometry_msgs::PoseStamped>();
     controller_plan_ = new std::vector<geometry_msgs::PoseStamped>();
 
-    //set up the planner's thread
+    //set up the planner's thread  创建全局规划器线程，在该线程里运行planThread函数
     planner_thread_ = new boost::thread(std::bind(&MoveBase::planThread, this));
 
-    //for commanding the base
+    //for commanding the base   发布速度
     vel_pub_ = nh.advertise<geometry_msgs::Twist>("cmd_vel", 1);
+    //即时目标的发布
     current_goal_pub_ = private_nh.advertise<geometry_msgs::PoseStamped>("current_goal", 0 );
 
-    ros::NodeHandle action_nh("move_base");
+    ros::NodeHandle action_nh("move_base");   //创建了一个命名空间为move_base的NodeHandle
+    //发布MoveBaseActionGoal消息到/move_base/goal话题上，不懂有啥用
     action_goal_pub_ = action_nh.advertise<move_base_msgs::MoveBaseActionGoal>("goal", 1);
+    //
     recovery_status_pub_= action_nh.advertise<move_base_msgs::RecoveryStatus>("recovery_status", 1);
 
     //we'll provide a mechanism for some people to send goals as PoseStamped messages over a topic
     //they won't get any useful information back about its status, but this is useful for tools
-    //like nav_view and rviz
+    //like nav_view and rviz    就是订阅目标，可以用rviz来发送目标
     ros::NodeHandle simple_nh("move_base_simple");
     goal_sub_ = simple_nh.subscribe<geometry_msgs::PoseStamped>("goal", 1, [this](auto& goal){ goalCB(goal); });
 
     //we'll assume the radius of the robot to be consistent with what's specified for the costmaps
-    private_nh.param("local_costmap/inscribed_radius", inscribed_radius_, 0.325);
-    private_nh.param("local_costmap/circumscribed_radius", circumscribed_radius_, 0.46);
-    private_nh.param("clearing_radius", clearing_radius_, circumscribed_radius_);
+    //加载代价地图的参数（内切、外接、清理半径等），假设机器人的半径和costmap规定的一致
+    private_nh.param("local_costmap/inscribed_radius", inscribed_radius_, 0.325); //内切圆半径
+    private_nh.param("local_costmap/circumscribed_radius", circumscribed_radius_, 0.46);  //外接圆半径
+    private_nh.param("clearing_radius", clearing_radius_, circumscribed_radius_);   //清理障碍物的范围
     private_nh.param("conservative_reset_dist", conservative_reset_dist_, 3.0);
 
-    private_nh.param("shutdown_costmaps", shutdown_costmaps_, false);
-    private_nh.param("clearing_rotation_allowed", clearing_rotation_allowed_, true);
-    private_nh.param("recovery_behavior_enabled", recovery_behavior_enabled_, true);
+    private_nh.param("shutdown_costmaps", shutdown_costmaps_, false); //是否关闭代价地图
+    private_nh.param("clearing_rotation_allowed", clearing_rotation_allowed_, true);  //是否允许通过旋转清理障碍物
+    private_nh.param("recovery_behavior_enabled", recovery_behavior_enabled_, true);  //是否启用恢复行为
 
     //create the ros wrapper for the planner's costmap... and initializer a pointer we'll use with the underlying map
+    //全局规划器代价地图global_costmap_ros_
     planner_costmap_ros_ = new costmap_2d::Costmap2DROS("global_costmap", tf_);
-    planner_costmap_ros_->pause();
+    planner_costmap_ros_->pause();  //暂停代价地图更新
 
-    //initialize the global planner
+    //initialize the global planner   初始化全局规划器，planner_指针
     try {
       planner_ = bgp_loader_.createInstance(global_planner);
       planner_->initialize(bgp_loader_.getName(global_planner), planner_costmap_ros_);
@@ -130,10 +143,11 @@ namespace move_base {
     }
 
     //create the ros wrapper for the controller's costmap... and initializer a pointer we'll use with the underlying map
+    //本地规划器代价地图controller_costmap_ros_
     controller_costmap_ros_ = new costmap_2d::Costmap2DROS("local_costmap", tf_);
     controller_costmap_ros_->pause();
 
-    //create a local planner
+    //create a local planner    初始化本地规划器，tc_指针
     try {
       tc_ = blp_loader_.createInstance(local_planner);
       ROS_INFO("Created local_planner %s", local_planner.c_str());
@@ -144,6 +158,7 @@ namespace move_base {
     }
 
     // Start actively updating costmaps based on sensor data
+    //根据传感器数据动态更新全局和本地的代价地图
     planner_costmap_ros_->start();
     controller_costmap_ros_->start();
 
@@ -172,6 +187,7 @@ namespace move_base {
     recovery_index_ = 0;
 
     //we're all set up now so we can start the action server
+    //调用action server的start函数，服务器启动
     as_->start();
 
     dsrv_ = new dynamic_reconfigure::Server<move_base::MoveBaseConfig>(ros::NodeHandle("~"));
@@ -648,6 +664,8 @@ namespace move_base {
     }
   }
 
+
+  //MoveBase的控制主体
   void MoveBase::executeCb(const move_base_msgs::MoveBaseGoalConstPtr& move_base_goal)
   {
     if(!isQuaternionValid(move_base_goal->target_pose.pose.orientation)){
