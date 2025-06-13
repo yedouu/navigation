@@ -555,15 +555,17 @@ namespace move_base {
     return true;
   }
 
+  //将传入的目标位姿 goal_pose_msg 转换到导航系统所使用的全局坐标系（global frame）中
   geometry_msgs::PoseStamped MoveBase::goalToGlobalFrame(const geometry_msgs::PoseStamped& goal_pose_msg){
-    std::string global_frame = planner_costmap_ros_->getGlobalFrameID();
+    std::string global_frame = planner_costmap_ros_->getGlobalFrameID();  //获取全局坐标系的名称
     geometry_msgs::PoseStamped goal_pose, global_pose;
     goal_pose = goal_pose_msg;
 
     //just get the latest available transform... for accuracy they should send
     //goals in the frame of the planner
-    goal_pose.header.stamp = ros::Time();
+    goal_pose.header.stamp = ros::Time();   //为了确保 TF 能找到最新的坐标系变换
 
+    //尝试执行坐标变换
     try{
       tf_.transform(goal_pose_msg, global_pose, global_frame);
     }
@@ -668,39 +670,59 @@ namespace move_base {
   //MoveBase的控制主体
   void MoveBase::executeCb(const move_base_msgs::MoveBaseGoalConstPtr& move_base_goal)
   {
+    //检测收到的目标位置的旋转四元数是否有效，若无效，直接返回
     if(!isQuaternionValid(move_base_goal->target_pose.pose.orientation)){
       as_->setAborted(move_base_msgs::MoveBaseResult(), "Aborting on goal because it was sent with an invalid quaternion");
       return;
     }
 
+    ////将目标位置转换到global坐标系下
     geometry_msgs::PoseStamped goal = goalToGlobalFrame(move_base_goal->target_pose);
 
+
+
+
+    //全局规划部分
     publishZeroVelocity();
-    //we have a goal so start the planner
+    //we have a goal so start the planner 启动全局规划
     boost::unique_lock<boost::recursive_mutex> lock(planner_mutex_);
+    //用接收到的目标goal来更新全局变量，即全局规划目标，这个值在planThread中会被用来做全局规划的当前目标
     planner_goal_ = goal;
+    //全局规划标志位设为真
     runPlanner_ = true;
+    //全局规划器线程绑定的函数plannerThread()里有planner_cond_对象的wait函数，
+    //在这里调用notify会直接启动全局规划器线程并于此处阻塞
     planner_cond_.notify_one();
+    //解锁互斥锁，允许其他线程访问共享资源
     lock.unlock();
 
+    //全局规划完成后，发布目标到current_goal话题上
     current_goal_pub_.publish(goal);
 
     ros::Rate r(controller_frequency_);
-    if(shutdown_costmaps_){
+    if(shutdown_costmaps_){   //如果代价地图是被关闭的，这里重启
       ROS_DEBUG_NAMED("move_base","Starting up costmaps that were shut down previously");
+      //重新启动全局和本地代价地图
       planner_costmap_ros_->start();
       controller_costmap_ros_->start();
     }
 
     //we want to make sure that we reset the last time we had a valid plan and control
-    last_valid_control_ = ros::Time::now();
-    last_valid_plan_ = ros::Time::now();
-    last_oscillation_reset_ = ros::Time::now();
-    planning_retries_ = 0;
+    last_valid_control_ = ros::Time::now();   //上一次有效的局部规划时间设为现在
+    last_valid_plan_ = ros::Time::now();    //上一次有效的全局规划时间设为现在
+    last_oscillation_reset_ = ros::Time::now();   //上一次震荡重置时间设为现在
+    planning_retries_ = 0;    //对同一目标的全局规划次数记录归为0
 
+
+
+
+
+    //全局规划完成，接下来循环调用executeCycle函数来控制机器人进行局部规划
     ros::NodeHandle n;
     while(n.ok())
     {
+      //c_freq_change_被初始化为false
+      //如果c_freq_change_即局部规划频率需要中途更改为真，用更改后的controller_frequency_来更新r值
       if(c_freq_change_)
       {
         ROS_INFO("Setting controller frequency to %.2f", controller_frequency_);
@@ -708,7 +730,9 @@ namespace move_base {
         c_freq_change_ = false;
       }
 
+      //如果action的服务器被抢占，可能是“局部规划进行过程中收到新的目标”，也可能是“收到取消行动的命令”
       if(as_->isPreemptRequested()){
+        //如果获得了新目标，接收并存储新目标，并将上述过程重新进行一遍
         if(as_->isNewGoalAvailable()){
           //if we're active and a new goal is available, we'll accept it, but we won't shut anything down
           move_base_msgs::MoveBaseGoal new_goal = *as_->acceptNewGoal();
@@ -743,9 +767,12 @@ namespace move_base {
         }
         else {
           //if we've been preempted explicitly we need to shut things down
+          //否则，服务器的抢占是由于收到了取消行动的命令
+          //重置服务器状态
           resetState();
 
           //notify the ActionServer that we've successfully preempted
+           //action服务器清除相关内容，并调用setPreempted()函数
           ROS_DEBUG_NAMED("move_base","Move base preempting the current goal");
           as_->setPreempted();
 

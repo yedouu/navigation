@@ -2,4 +2,5 @@
 *.project
 *.cproject
 *.vscode
+*build
 
