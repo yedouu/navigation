@@ -487,6 +487,7 @@ namespace move_base {
     tc_.reset();
   }
 
+  //实际进行全局规划的函数
   bool MoveBase::makePlan(const geometry_msgs::PoseStamped& goal, std::vector<geometry_msgs::PoseStamped>& plan){
     boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock(*(planner_costmap_ros_->getCostmap()->getMutex()));
 
@@ -584,18 +585,19 @@ namespace move_base {
     planner_cond_.notify_one();
   }
 
-  void MoveBase::planThread(){
+  void MoveBase::planThread(){    //核心是调用makePlan函数，时刻等待被executeCB函数唤醒
     ROS_DEBUG_NAMED("move_base_plan_thread","Starting planner thread...");
     ros::NodeHandle n;
     ros::Timer timer;
     bool wait_for_wake = false;
     boost::unique_lock<boost::recursive_mutex> lock(planner_mutex_);
+    
     while(n.ok()){
       //check if we should run the planner (the mutex is locked)
       while(wait_for_wake || !runPlanner_){
         //if we should not be running the planner then suspend this thread
         ROS_DEBUG_NAMED("move_base_plan_thread","Planner thread is suspending");
-        planner_cond_.wait(lock);
+        planner_cond_.wait(lock); //持续释放锁，直到外部将runPlanner_设置为true就跳出循环开始全局规划
         wait_for_wake = false;
       }
       ros::Time start_time = ros::Time::now();
@@ -606,10 +608,11 @@ namespace move_base {
       ROS_DEBUG_NAMED("move_base_plan_thread","Planning...");
 
       //run planner
-      planner_plan_->clear();
+      planner_plan_->clear();   //全局规划初始化，清空
+      //这里用了短路求值，先判断n.ok()是否为真，如果为假则不执行makePlan函数
       bool gotPlan = n.ok() && makePlan(temp_goal, *planner_plan_);
 
-      if(gotPlan){
+      if(gotPlan){  //规划成功，打印规划路线上的点数
         ROS_DEBUG_NAMED("move_base_plan_thread","Got Plan with %zu points!", planner_plan_->size());
         //pointer swap the plans under mutex (the controller will pull from latest_plan_)
         std::vector<geometry_msgs::PoseStamped>* temp_plan = planner_plan_;
@@ -625,25 +628,27 @@ namespace move_base {
 
         //make sure we only start the controller if we still haven't reached the goal
         if(runPlanner_)
-          state_ = CONTROLLING;
+          state_ = CONTROLLING;   //将MoveBase状态设置为CONTROLLING（局部规划中）
         if(planner_frequency_ <= 0)
-          runPlanner_ = false;
+          runPlanner_ = false;  //规划频率小于0时，规划器线程不再运行
         lock.unlock();
       }
       //if we didn't get a plan and we are in the planning state (the robot isn't moving)
-      else if(state_==PLANNING){
+      else if(state_==PLANNING){  //全局规划失败且状态为PLANNING（全局规划中）
         ROS_DEBUG_NAMED("move_base_plan_thread","No Plan...");
+        //最迟制定出本次全局规划的时间=上次成功规划的时间+容忍时间
         ros::Time attempt_end = last_valid_plan_ + ros::Duration(planner_patience_);
 
         //check if we've tried to make a plan for over our time limit or our maximum number of retries
         //issue #496: we stop planning when one of the conditions is true, but if max_planning_retries_
         //is negative (the default), it is just ignored and we have the same behavior as ever
         lock.lock();
-        planning_retries_++;
+        planning_retries_++;  //记录全局规划失败的次数
+        //如果runplanner被置为真，且目前超时或超次数，进入恢复行为模式，max_planning_retries_默认为-1，此时只要超时就会触发恢复行为
         if(runPlanner_ &&
            (ros::Time::now() > attempt_end || planning_retries_ > uint32_t(max_planning_retries_))){
           //we'll move into our obstacle clearing mode
-          state_ = CLEARING;
+          state_ = CLEARING;    //将MoveBase状态设置为恢复行为
           runPlanner_ = false;  // proper solution for issue #523
           publishZeroVelocity();
           recovery_trigger_ = PLANNING_R;
@@ -810,20 +815,25 @@ namespace move_base {
       //for timing that gives real time even in simulation
       ros::WallTime start = ros::WallTime::now();
 
+
+
+
       //the real work on pursuing a goal is done here
+      //调用executeCycle函数进行局部规划，传入目标和全局规划路线
       bool done = executeCycle(goal);
 
       //if we're done, then we'll return from execute
-      if(done)
+      if(done)  //局部规划结束就退出循环
         return;
 
       //check if execution of the goal has completed in some way
-
+      //记录从局部规划开始到这时的时间差
       ros::WallDuration t_diff = ros::WallTime::now() - start;
       ROS_DEBUG_NAMED("move_base","Full control cycle time: %.9f\n", t_diff.toSec());
 
-      r.sleep();
+      r.sleep();//用局部规划频率进行休眠
       //make sure to sleep for the remainder of our cycle time
+      //检测控制循环的执行时间是否超过了预期的频率
       if(r.cycleTime() > ros::Duration(1 / controller_frequency_) && state_ == CONTROLLING)
         ROS_WARN("Control loop missed its desired rate of %.4fHz... the loop actually took %.4f seconds", controller_frequency_, r.cycleTime().toSec());
     }
