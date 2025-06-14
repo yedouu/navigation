@@ -495,12 +495,12 @@ namespace move_base {
     plan.clear();
 
     //since this gets called on handle activate
-    if(planner_costmap_ros_ == NULL) {
+    if(planner_costmap_ros_ == NULL) {    //如果没有全局代价地图，返回false，因为全局规划必须基于全局代价地图
       ROS_ERROR("Planner costmap ROS is NULL, unable to create global plan");
       return false;
     }
 
-    //get the starting pose of the robot
+    //get the starting pose of the robot  获取机器人的起始位姿
     geometry_msgs::PoseStamped global_pose;
     if(!getRobotPose(global_pose, planner_costmap_ros_)) {
       ROS_WARN("Unable to get starting pose of robot, unable to create global plan");
@@ -510,6 +510,7 @@ namespace move_base {
     const geometry_msgs::PoseStamped& start = global_pose;
 
     //if the planner fails or returns a zero length plan, planning failed
+    //调用BaseGlobalPlanner类的makePlan函数做全局规划
     if(!planner_->makePlan(start, goal, plan) || plan.empty()){
       ROS_DEBUG_NAMED("move_base","Failed to find a  plan to point (%.2f, %.2f)", goal.pose.position.x, goal.pose.position.y);
       return false;
@@ -854,23 +855,25 @@ namespace move_base {
     return hypot(p1.pose.position.x - p2.pose.position.x, p1.pose.position.y - p2.pose.position.y);
   }
 
+  //执行局部规划的主体函数
   bool MoveBase::executeCycle(geometry_msgs::PoseStamped& goal){
     boost::recursive_mutex::scoped_lock ecl(configuration_mutex_);
-    //we need to be able to publish velocity commands
+    //we need to be able to publish velocity commands   先声明将要发布的速度信息
     geometry_msgs::Twist cmd_vel;
 
     //update feedback to correspond to our curent position
     geometry_msgs::PoseStamped global_pose;
-    getRobotPose(global_pose, planner_costmap_ros_);
+    getRobotPose(global_pose, planner_costmap_ros_);    //从全局代价地图上获取当前位姿
     const geometry_msgs::PoseStamped& current_position = global_pose;
 
-    //push the feedback out
+    //push the feedback out   feedback指的是从服务端周期反馈回客户端的信息，把当前位姿反馈给客户端
     move_base_msgs::MoveBaseFeedback feedback;
     feedback.base_position = current_position;
     as_->publishFeedback(feedback);
 
     //check to see if we've moved far enough to reset our oscillation timeout
-    if(distance(current_position, oscillation_pose_) >= oscillation_distance_)
+    //如果长时间内移动距离没有超过震荡距离，那么认为机器人在震荡（长时间被困在一片小区域），进入恢复行为
+    if(distance(current_position, oscillation_pose_) >= oscillation_distance_)  //不处于震荡状态，重置相关变量
     {
       last_oscillation_reset_ = ros::Time::now();
       oscillation_pose_ = current_position;
@@ -881,29 +884,30 @@ namespace move_base {
     }
 
     //check that the observation buffers for the costmap are current, we don't want to drive blind
+    //检查局部代价地图是否是当前的
     if(!controller_costmap_ros_->isCurrent()){
       ROS_WARN("[%s]:Sensor data is out of date, we're not going to allow commanding of the base for safety",ros::this_node::getName().c_str());
-      publishZeroVelocity();
+      publishZeroVelocity();  //停止运动
       return false;
     }
 
     //if we have a new plan then grab it and give it to the controller
-    if(new_global_plan_){
+    if(new_global_plan_){   //判定全局规划是否得出新的路线
       //make sure to set the new plan flag to false
-      new_global_plan_ = false;
+      new_global_plan_ = false;   //new_global_plan_标志位在planThread中被置为真，这里设置为false可以判断是否有新的global_plan
 
       ROS_DEBUG_NAMED("move_base","Got a new plan...swap pointers");
 
-      //do a pointer swap under mutex
+      //do a pointer swap under mutex   通过指针交换(轻量级，不涉及数据交换)将最新的全局规划结果传递给controller_plan_
       std::vector<geometry_msgs::PoseStamped>* temp_plan = controller_plan_;
 
-      boost::unique_lock<boost::recursive_mutex> lock(planner_mutex_);
+      boost::unique_lock<boost::recursive_mutex> lock(planner_mutex_);  //保证线程安全
       controller_plan_ = latest_plan_;
       latest_plan_ = temp_plan;
       lock.unlock();
       ROS_DEBUG_NAMED("move_base","pointers swapped!");
 
-      if(!tc_->setPlan(*controller_plan_)){
+      if(!tc_->setPlan(*controller_plan_)){   //将全局规划的结果传递给局部规划器，传递失败就退出
         //ABORT and SHUTDOWN COSTMAPS
         ROS_ERROR("Failed to pass global plan to the controller, aborting.");
         resetState();
@@ -923,9 +927,9 @@ namespace move_base {
     }
 
     //the move_base state machine, handles the control logic for navigation
-    switch(state_){
+    switch(state_){   //对MoveBase状态进行判断
       //if we are in a planning state, then we'll attempt to make a plan
-      case PLANNING:
+      case PLANNING:    //全局规划还没完成，还没得到一个全局路线，那么唤醒一个全局规划线程去制定全局路线
         {
           boost::recursive_mutex::scoped_lock lock(planner_mutex_);
           runPlanner_ = true;
@@ -935,11 +939,11 @@ namespace move_base {
         break;
 
       //if we're controlling, we'll attempt to find valid velocity commands
-      case CONTROLLING:
+      case CONTROLLING:   //全局规划成功，得到全局路线，这里进行真正的局部规划
         ROS_DEBUG_NAMED("move_base","In controlling state.");
 
         //check to see if we've reached our goal
-        if(tc_->isGoalReached()){
+        if(tc_->isGoalReached()){   //如果已经位于终点，结束局部规划
           ROS_DEBUG_NAMED("move_base","Goal reached!");
           resetState();
 
@@ -952,7 +956,7 @@ namespace move_base {
           return true;
         }
 
-        //check for an oscillation condition
+        //check for an oscillation condition    如果未到达终点，检查是否处于振荡状态
         if(oscillation_timeout_ > 0.0 &&
             last_oscillation_reset_ + ros::Duration(oscillation_timeout_) < ros::Time::now())
         {
@@ -964,12 +968,13 @@ namespace move_base {
         {
          boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock(*(controller_costmap_ros_->getCostmap()->getMutex()));
 
+        //局部规划器实例tc_被传入了全局规划后，调用computeVelocityCommands函数计算速度存储在cmd_vel中
         if(tc_->computeVelocityCommands(cmd_vel)){
           ROS_DEBUG_NAMED( "move_base", "Got a valid command from the local planner: %.3lf, %.3lf, %.3lf",
                            cmd_vel.linear.x, cmd_vel.linear.y, cmd_vel.angular.z );
           last_valid_control_ = ros::Time::now();
           //make sure that we send the velocity command to the base
-          vel_pub_.publish(cmd_vel);
+          vel_pub_.publish(cmd_vel);    //向底盘发送速度控制消息，一个循环只发一次速度命令
           if(recovery_trigger_ == CONTROLLING_R)
             recovery_index_ = 0;
         }
@@ -978,13 +983,13 @@ namespace move_base {
           ros::Time attempt_end = last_valid_control_ + ros::Duration(controller_patience_);
 
           //check if we've tried to find a valid control for longer than our time limit
-          if(ros::Time::now() > attempt_end){
+          if(ros::Time::now() > attempt_end){   //计算失败，且超时，则进入对应恢复行为
             //we'll move into our obstacle clearing mode
             publishZeroVelocity();
             state_ = CLEARING;
             recovery_trigger_ = CONTROLLING_R;
           }
-          else{
+          else{   //若局部规划用时没超过限制
             //otherwise, if we can't find a valid control, we'll go back to planning
             last_valid_plan_ = ros::Time::now();
             planning_retries_ = 0;
@@ -994,7 +999,7 @@ namespace move_base {
             //enable the planner thread in case it isn't running on a clock
             boost::unique_lock<boost::recursive_mutex> lock(planner_mutex_);
             runPlanner_ = true;
-            planner_cond_.notify_one();
+            planner_cond_.notify_one();   //发布0速度，在机器人当前位置再次回到全局规划
             lock.unlock();
           }
         }
@@ -1003,7 +1008,7 @@ namespace move_base {
         break;
 
       //we'll try to clear out space with any user-provided recovery behaviors
-      case CLEARING:
+      case CLEARING:    //如果全局规划失败，进入了恢复行为状态，我们尝试去用用户提供的恢复行为去清除空间
         ROS_DEBUG_NAMED("move_base","In clearing/recovery state");
         //we'll invoke whatever recovery behavior we're currently on if they're enabled
         if(recovery_behavior_enabled_ && recovery_index_ < recovery_behaviors_.size()){
@@ -1261,3 +1266,15 @@ namespace move_base {
     return true;
   }
 };
+
+
+
+//总结1：
+/*
+
+在MoveBase主体中，各层地图的更新被启动，Action的回调函数触发全局规划线程，
+若成功，则将全局规划结果传入局部规划器，循环进行局部规划，得到速度指令，控制机器人前进，直到到达目标。
+其间，需要判断机器人是否到达终点（若是则规划停止）、机器人是否状态异常如发生震荡行为（若是则进入恢复行为）、
+机器人是否超时（若是则停止规划发布零速，否则重新规划）等等。
+
+*/
