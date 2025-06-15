@@ -34,7 +34,7 @@
 *
 * Author: Eitan Marder-Eppstein
 *********************************************************************/
-#ifndef NAV_CORE_BASE_GLOBAL_PLANNER_H
+#ifndef NAV_CORE_BASE_GLOBAL_PLANNER_H    //头文件保护宏
 #define NAV_CORE_BASE_GLOBAL_PLANNER_H
 
 #include <geometry_msgs/PoseStamped.h>
@@ -54,6 +54,7 @@ namespace nav_core {
        * @param plan The plan... filled by the planner
        * @return True if a valid plan was found, false otherwise
        */
+      //纯虚函数，即接口函数，派生类必须实现该函数
       virtual bool makePlan(const geometry_msgs::PoseStamped& start, 
           const geometry_msgs::PoseStamped& goal, std::vector<geometry_msgs::PoseStamped>& plan) = 0;
 
@@ -65,6 +66,7 @@ namespace nav_core {
        * @param cost The plans calculated cost
        * @return True if a valid plan was found, false otherwise
        */
+      //普通虚函数，派生类可以选择重载该函数，多了一个cost参数
       virtual bool makePlan(const geometry_msgs::PoseStamped& start, 
                             const geometry_msgs::PoseStamped& goal, std::vector<geometry_msgs::PoseStamped>& plan,
                             double& cost)
@@ -78,6 +80,7 @@ namespace nav_core {
        * @param  name The name of this planner
        * @param  costmap_ros A pointer to the ROS wrapper of the costmap to use for planning
        */
+      //纯虚函数，派生类必须实现该函数
       virtual void initialize(std::string name, costmap_2d::Costmap2DROS* costmap_ros) = 0;
 
       /**

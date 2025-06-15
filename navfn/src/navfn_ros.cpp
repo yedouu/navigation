@@ -62,12 +62,13 @@ namespace navfn {
 
   void NavfnROS::initialize(std::string name, costmap_2d::Costmap2D* costmap, std::string global_frame){
     if(!initialized_){
-      costmap_ = costmap;
-      global_frame_ = global_frame;
+      costmap_ = costmap;   //全局代价地图
+      global_frame_ = global_frame;   //全局坐标系
+      //指向NavFn类实例，传入参数为地图大小
       planner_ = boost::shared_ptr<NavFn>(new NavFn(costmap_->getSizeInCellsX(), costmap_->getSizeInCellsY()));
 
       ros::NodeHandle private_nh("~/" + name);
-
+      ////发布全局规划器名称/plan话题
       plan_pub_ = private_nh.advertise<nav_msgs::Path>("plan", 1);
 
       private_nh.param("visualize_potential", visualize_potential_, false);
@@ -195,6 +196,7 @@ namespace navfn {
     return makePlan(start, goal, default_tolerance_, plan);
   }
 
+  //Movebase中对全局规划器调用的函数
   bool NavfnROS::makePlan(const geometry_msgs::PoseStamped& start, 
       const geometry_msgs::PoseStamped& goal, double tolerance, std::vector<geometry_msgs::PoseStamped>& plan){
     boost::mutex::scoped_lock lock(mutex_);
@@ -208,6 +210,7 @@ namespace navfn {
 
     ros::NodeHandle n;
 
+    //确保起点和终点的坐标系是全局坐标系
     //until tf can handle transforming things that are way in the past... we'll require the goal to be in our global frame
     if(goal.header.frame_id != global_frame_){
       ROS_ERROR("The goal pose passed to this planner must be in the %s frame.  It is instead in the %s frame.", 
@@ -225,15 +228,16 @@ namespace navfn {
     double wy = start.pose.position.y;
 
     unsigned int mx, my;
+    //将世界坐标系中的点转换为代价地图的栅格坐标系（与地图分辨率有关，具体看函数实现）
     if(!costmap_->worldToMap(wx, wy, mx, my)){
       ROS_WARN_THROTTLE(1.0, "The robot's start position is off the global costmap. Planning will always fail, are you sure the robot has been properly localized?");
       return false;
     }
 
     //clear the starting cell within the costmap because we know it can't be an obstacle
-    clearRobotCell(start, mx, my);
+    clearRobotCell(start, mx, my);  //就是把机器人所在的那块栅格的代价设为FREE_SPACE
 
-    //make sure to resize the underlying array that Navfn uses
+    //make sure to resize the underlying array that Navfn uses    还不知道有啥用
     planner_->setNavArr(costmap_->getSizeInCellsX(), costmap_->getSizeInCellsY());
     planner_->setCostmap(costmap_->getCharMap(), true, allow_unknown_);
 
@@ -241,6 +245,7 @@ namespace navfn {
     map_start[0] = mx;
     map_start[1] = my;
 
+    //对着目标点进行同样的操作
     wx = goal.pose.position.x;
     wy = goal.pose.position.y;
 
@@ -261,17 +266,18 @@ namespace navfn {
     planner_->setGoal(map_start);
 
     //bool success = planner_->calcNavFnAstar();
-    planner_->calcNavFnDijkstra(true);
+    planner_->calcNavFnDijkstra(true);  //使用Dijkstra算法计算全局路径
 
     double resolution = costmap_->getResolution();
     geometry_msgs::PoseStamped p, best_pose;
-    p = goal;
+    p = goal;   //这个是世界坐标系下的坐标系
 
     bool found_legal = false;
     double best_sdist = DBL_MAX;
 
     p.pose.position.y = goal.pose.position.y - tolerance;
 
+    //在目标位置附近2*tolerance的矩形范围内，寻找与目标位置最近的、且不是障碍物的cell，作为全局路径实际的终点
     while(p.pose.position.y <= goal.pose.position.y + tolerance){
       p.pose.position.x = goal.pose.position.x - tolerance;
       while(p.pose.position.x <= goal.pose.position.x + tolerance){
@@ -287,7 +293,7 @@ namespace navfn {
       p.pose.position.y += resolution;
     }
 
-    if(found_legal){
+    if(found_legal){  //找到best_pose，传给NavFnshi实例并获取最终plan
       //extract the plan
       if(getPlanFromPotential(best_pose, plan)){
         //make sure the goal we push on has the same timestamp as the rest of the plan
@@ -300,6 +306,7 @@ namespace navfn {
       }
     }
 
+    //这部分没啥用
     if (visualize_potential_)
     {
       // Publish the potentials as a PointCloud2
