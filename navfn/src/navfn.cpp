@@ -224,7 +224,7 @@ namespace navfn {
   // set up cost array, usually from ROS
   //
 
-  void
+  void    //根据代价值生成无向权重图
     NavFn::setCostmap(const COSTTYPE *cmap, bool isROS, bool allow_unknown)
     {
       COSTTYPE *cm = costarr;
@@ -367,12 +367,12 @@ namespace navfn {
       // reset values in propagation arrays
       for (int i=0; i<ns; i++)
       {
-        potarr[i] = POT_HIGH;
-        if (!keepit) costarr[i] = COST_NEUTRAL;
-        gradx[i] = grady[i] = 0.0;
+        potarr[i] = POT_HIGH;   // 初始默认每个点的代价值都设置为最大（表示还没计算）
+        if (!keepit) costarr[i] = COST_NEUTRAL;    // 如果不是保留已有地图，重设代价为中性值（50）
+        gradx[i] = grady[i] = 0.0;  // 梯度设置为0（梯度稍后用于优化方向）
       }
 
-      // outer bounds of cost array
+      // outer bounds of cost array   将地图四周一圈设置成障碍（不可通行）
       COSTTYPE *pc;
       pc = costarr;
       for (int i=0; i<nx; i++)
@@ -387,7 +387,7 @@ namespace navfn {
       for (int i=0; i<ny; i++, pc+=nx)
         *pc = COST_OBS;
 
-      // priority buffers
+      // priority buffers   初始化传播用的缓冲区（队列）
       curT = COST_OBS;
       curP = pb1; 
       curPe = 0;
@@ -398,10 +398,10 @@ namespace navfn {
       memset(pending, 0, ns*sizeof(bool));
 
       // set goal
-      int k = goal[0] + goal[1]*nx;
-      initCost(k,0);
+      int k = goal[0] + goal[1]*nx;   //把二维地图坐标转换成一维数组索引
+      initCost(k,0);    // 设置目标点的 potential = 0，并把周围点放入传播队列
 
-      // find # of obstacle cells
+      // find # of obstacle cells   统计当前障碍物的数量（可选统计信息）
       pc = costarr;
       int ntot = 0;
       for (int i=0; i<ns; i++, pc++)
@@ -436,11 +436,12 @@ namespace navfn {
 
 #define INVSQRT2 0.707106781
 
-  inline void
-    NavFn::updateCell(int n)
+  inline void 
+    NavFn::updateCell(int n)  // 更新节点,inline函数
     {
       // get neighbors
       float u,d,l,r;
+      // 获取上下左右四个栅格节点的行走代价值
       l = potarr[n-1];
       r = potarr[n+1];		
       u = potarr[n-nx];
@@ -449,13 +450,13 @@ namespace navfn {
       //	 potarr[n], l, r, u, d);
       //  ROS_INFO("[Update] cost: %d\n", costarr[n]);
 
-      // find lowest, and its lowest neighbor
+      // find lowest, and its lowest neighbor   找出 potential 较小的两个方向（横、竖）
       float ta, tc;
       if (l<r) tc=l; else tc=r;
       if (u<d) ta=u; else ta=d;
 
-      // do planar wave update
-      if (costarr[n] < COST_OBS)	// don't propagate into obstacles
+      // do planar wave update    如果大于等于 COST_OBS，说明是障碍物，不能传播，直接跳过
+      if (costarr[n] < COST_OBS)	// don't propagate into obstacles   
       {
         float hf = (float)costarr[n]; // traversability factor
         float dc = tc-ta;		// relative cost between ta,tc
@@ -477,6 +478,8 @@ namespace navfn {
           float d = dc/hf;
           float v = -0.2301*d*d + 0.5307*d + 0.7040;
           pot = ta + hf*v;
+          //pls read this paper for more details:
+          //  https://github.com/locusrobotics/robot_navigation/tree/master/dlux_global_planner#the-kernel
         }
 
         //      ROS_INFO("[Update] new pot: %d\n", costarr[n]);
@@ -619,26 +622,26 @@ namespace navfn {
       int cycle = 0;		// which cycle we're on
 
       // set up start cell
-      int startCell = start[1]*nx + start[0];
+      int startCell = start[1]*nx + start[0];   //把起点的二维坐标转成一维索引
 
       for (; cycle < cycles; cycle++) // go for this many cycles, unless interrupted
       {
-        // 
+        // 当前待处理节点和下一轮待处理节点都为空，说明传播结束
         if (curPe == 0 && nextPe == 0) // priority blocks empty
           break;
 
         // stats
-        nc += curPe;
+        nc += curPe;    //统计处理过的节点总数
         if (curPe > nwv)
-          nwv = curPe;
+          nwv = curPe;  //记录最大同时待处理节点数，用于性能评估
 
         // reset pending flags on current priority buffer
         int *pb = curP;
         int i = curPe;			
-        while (i-- > 0)		
+        while (i-- > 0)		// 清除 pending 状态：这些节点已经处理完，不再等待
           pending[*(pb++)] = false;
 
-        // process current priority buffer
+        // process current priority buffer    处理 curP 中所有的节点，更新它们的邻居节点
         pb = curP; 
         i = curPe;
         while (i-- > 0)		
@@ -647,7 +650,7 @@ namespace navfn {
         if (displayInt > 0 &&  (cycle % displayInt) == 0)
           displayFn(this);
 
-        // swap priority blocks curP <=> nextP
+        // swap priority blocks curP <=> nextP  交换 curP 和 nextP，准备进行下一轮传播
         curPe = nextPe;
         nextPe = 0;
         pb = curP;		// swap buffers
@@ -787,7 +790,7 @@ namespace navfn {
       // test write
       //savemap("test");
 
-      // check path arrays
+      // check path arrays    初始化路径数组
       if (npathbuf < n)
       {
         if (pathx) delete [] pathx;
