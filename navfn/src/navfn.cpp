@@ -815,9 +815,9 @@ namespace navfn {
       {
         // check if near goal
         int nearest_point=std::max(0,std::min(nx*ny-1,stc+(int)round(dx)+(int)(nx*round(dy))));
-        if (potarr[nearest_point] < COST_NEUTRAL)
+        if (potarr[nearest_point] < COST_NEUTRAL)   //检查是否到达起点
         {
-          pathx[npath] = (float)goal[0];
+          pathx[npath] = (float)goal[0];    //将终点坐标添加到路径中，并返回路径长度
           pathy[npath] = (float)goal[1];
           return ++npath;	// done!
         }
@@ -828,13 +828,13 @@ namespace navfn {
           return 0;
         }
 
-        // add to path
+        // add to path    将当前到达的栅格点添加到轨迹中
         pathx[npath] = stc%nx + dx;
         pathy[npath] = stc/nx + dy;
         npath++;
 
         bool oscillation_detected = false;
-        if( npath > 2 &&
+        if( npath > 2 &&        //表明机器人在两个点之间 来回跳动，这不是有效的路径，而是陷入了局部震荡（oscillation）
             pathx[npath-1] == pathx[npath-3] &&
             pathy[npath-1] == pathy[npath-3] )
         {
@@ -842,8 +842,8 @@ namespace navfn {
           oscillation_detected = true;
         }
 
-        int stcnx = stc+nx;
-        int stcpx = stc-nx;
+        int stcnx = stc+nx;   // get index of cell below
+        int stcpx = stc-nx;   // get index of cell above
 
         // check for potentials at eight positions near cell
         if (potarr[stc] >= POT_HIGH ||
@@ -855,7 +855,8 @@ namespace navfn {
             potarr[stcpx] >= POT_HIGH ||
             potarr[stcpx+1] >= POT_HIGH ||
             potarr[stcpx-1] >= POT_HIGH ||
-            oscillation_detected)
+            oscillation_detected)   // 检查当前到达节点的周边的8个节点是否有障碍物代价值，
+            //如果有的话，则直接将stc指向这8个节点中potential值最低的节点
         {
           ROS_DEBUG("[Path] Pot fn boundary, following grid (%0.1f/%d)", potarr[stc], npath);
           // check eight neighbors to find the lowest
@@ -884,7 +885,7 @@ namespace navfn {
           ROS_DEBUG("[Path] Pot: %0.1f  pos: %0.1f,%0.1f",
               potarr[stc], pathx[npath-1], pathy[npath-1]);
 
-          if (potarr[stc] >= POT_HIGH)
+          if (potarr[stc] >= POT_HIGH)  //如果当前节点的代价值仍然很高，说明周围都是障碍物
           {
             ROS_DEBUG("[PathCalc] No path found, high potential");
             //savemap("navfn_highpot");
@@ -893,17 +894,18 @@ namespace navfn {
         }
 
         // have a good gradient here
+        // 如果有好的梯度，则直接计算梯度，并沿着梯度方向查找下一个节点
         else			
         {
 
           // get grad at four positions near cell
-          gradCell(stc);
-          gradCell(stc+1);
-          gradCell(stcnx);
-          gradCell(stcnx+1);
+          gradCell(stc);// 计算当前节点梯度
+          gradCell(stc+1);// 计算右边相邻节点梯度
+          gradCell(stcnx);//计算上边相邻节点梯度
+          gradCell(stcnx+1);//计算右上边节点梯度
 
 
-          // get interpolated gradient
+          // get interpolated gradient  插值当前节点的梯度
           float x1 = (1.0-dx)*gradx[stc] + dx*gradx[stc+1];
           float x2 = (1.0-dx)*gradx[stcnx] + dx*gradx[stcnx+1];
           float x = (1.0-dy)*x1 + dy*x2; // interpolated x
@@ -924,7 +926,7 @@ namespace navfn {
             return 0;
           }
 
-          // move in the right direction
+          // move in the right direction  向梯度方向移动
           float ss = pathStep/hypot(x, y);
           dx += x*ss;
           dy += y*ss;

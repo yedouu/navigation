@@ -437,3 +437,12 @@ namespace navfn {
     return !plan.empty();
   }
 };
+
+
+//NavFn计算全局路径的大概流程
+/*
+MoveBase中调用NavfnROS::initialize传入了代价地图和坐标系名称
+之后MoveBase中调用NavfnROS::makePlan，makePlan中调用calcNavFnDijkstra；
+calcNavFnDijkstra中先使用setupNavFn()初始化代价表，然后使用propNavFnDijkstra()遍历节点图并使用updateCell()计算代价值；
+最后在NavFn::calcPath()中从终点沿着梯度下降的方向计算轨迹
+*/
