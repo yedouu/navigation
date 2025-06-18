@@ -54,12 +54,14 @@ namespace nav_core {
        * @param cmd_vel Will be filled with the velocity command to be passed to the robot base
        * @return True if a valid velocity command was found, false otherwise
        */
+      //核心函数！用于计算当前时刻机器人应该执行的线速度/角速度
       virtual bool computeVelocityCommands(geometry_msgs::Twist& cmd_vel) = 0;
 
       /**
        * @brief  Check if the goal pose has been achieved by the local planner
        * @return True if achieved, false otherwise
        */
+      //检查机器人是否达到了目标点
       virtual bool isGoalReached() = 0;
 
       /**
@@ -67,6 +69,7 @@ namespace nav_core {
        * @param plan The plan to pass to the local planner
        * @return True if the plan was updated successfully, false otherwise
        */
+      //给本地规划器传递一条 全局路径，由 Global Planner 提供
       virtual bool setPlan(const std::vector<geometry_msgs::PoseStamped>& plan) = 0;
 
       /**

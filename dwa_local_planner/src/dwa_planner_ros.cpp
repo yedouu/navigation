@@ -113,9 +113,10 @@ namespace dwa_local_planner {
       planner_util_.initialize(tf, costmap, costmap_ros_->getGlobalFrameID());
 
       //create the actual planner that we'll use.. it'll configure itself from the parameter server
+      //创建实际执行 DWA 算法的 DWAPlanner 对象
       dp_ = boost::shared_ptr<DWAPlanner>(new DWAPlanner(name, &planner_util_));
 
-      if( private_nh.getParam( "odom_topic", odom_topic_ ))
+      if( private_nh.getParam( "odom_topic", odom_topic_ )) //用于速度获取（预测轨迹时用当前速度）
       {
         odom_helper_.setOdomTopic( odom_topic_ );
       }
@@ -123,6 +124,7 @@ namespace dwa_local_planner {
       initialized_ = true;
 
       // Warn about deprecated parameters -- remove this block in N-turtle
+      //兼容旧参数
       nav_core::warnRenamedParameter(private_nh, "max_vel_trans", "max_trans_vel");
       nav_core::warnRenamedParameter(private_nh, "min_vel_trans", "min_trans_vel");
       nav_core::warnRenamedParameter(private_nh, "max_vel_theta", "max_rot_vel");
@@ -169,11 +171,12 @@ namespace dwa_local_planner {
     }
   }
 
+  //发布轨迹用于 RViz 可视化
   void DWAPlannerROS::publishLocalPlan(std::vector<geometry_msgs::PoseStamped>& path) {
     base_local_planner::publishPlan(path, l_plan_pub_);
   }
 
-
+  //发布轨迹用于 RViz 可视化
   void DWAPlannerROS::publishGlobalPlan(std::vector<geometry_msgs::PoseStamped>& path) {
     base_local_planner::publishPlan(path, g_plan_pub_);
   }
@@ -193,7 +196,7 @@ namespace dwa_local_planner {
     }
 
     geometry_msgs::PoseStamped robot_vel;
-    odom_helper_.getRobotVel(robot_vel);
+    odom_helper_.getRobotVel(robot_vel);  //获取当前机器人实际速度
 
     /* For timing uncomment
     struct timeval start, end;
@@ -206,6 +209,7 @@ namespace dwa_local_planner {
     drive_cmds.header.frame_id = costmap_ros_->getBaseFrameID();
     
     // call with updated footprint
+    //根据当前位姿、当前速度进行轨迹采样，评估每条轨迹代价，返回代价最小的。
     base_local_planner::Trajectory path = dp_->findBestPath(global_pose, robot_vel, drive_cmds);
     //ROS_ERROR("Best: %.2f, %.2f, %.2f, %.2f", path.xv_, path.yv_, path.thetav_, path.cost_);
 
@@ -217,14 +221,14 @@ namespace dwa_local_planner {
     ROS_INFO("Cycle time: %.9f", t_diff);
     */
 
-    //pass along drive commands
+    //pass along drive commands   提取速度
     cmd_vel.linear.x = drive_cmds.pose.position.x;
     cmd_vel.linear.y = drive_cmds.pose.position.y;
     cmd_vel.angular.z = tf2::getYaw(drive_cmds.pose.orientation);
 
     //if we cannot move... tell someone
     std::vector<geometry_msgs::PoseStamped> local_plan;
-    if(path.cost_ < 0) {
+    if(path.cost_ < 0) {    //轨迹合法性检查
       ROS_DEBUG_NAMED("dwa_local_planner",
           "The dwa local planner failed to find a valid plan, cost functions discarded all candidates. This can mean there is an obstacle too close to the robot.");
       local_plan.clear();
@@ -235,7 +239,7 @@ namespace dwa_local_planner {
     ROS_DEBUG_NAMED("dwa_local_planner", "A valid velocity command of (%.2f, %.2f, %.2f) was found for this cycle.", 
                     cmd_vel.linear.x, cmd_vel.linear.y, cmd_vel.angular.z);
 
-    // Fill out the local plan
+    // Fill out the local plan    生成局部路径（供可视化）
     for(unsigned int i = 0; i < path.getPointsSize(); ++i) {
       double p_x, p_y, p_th;
       path.getPoint(i, p_x, p_y, p_th);
@@ -283,6 +287,7 @@ namespace dwa_local_planner {
     // update plan in dwa_planner even if we just stop and rotate, to allow checkTrajectory
     dp_->updatePlanAndLocalCosts(current_pose_, transformed_plan, costmap_ros_->getRobotFootprint());
 
+    //如果机器人已经到达目标位置附近,就进入“停止并旋转调整朝向”的控制模式。
     if (latchedStopRotateController_.isPositionReached(&planner_util_, current_pose_)) {
       //publish an empty plan because we've reached our goal position
       std::vector<geometry_msgs::PoseStamped> local_plan;
@@ -298,7 +303,7 @@ namespace dwa_local_planner {
           odom_helper_,
           current_pose_,
           [this](auto pos, auto vel, auto vel_samples){ return dp_->checkTrajectory(pos, vel, vel_samples); });
-    } else {
+    } else {    //否则，正常执行 DWA 局部规划
       bool isOk = dwaComputeVelocityCommands(current_pose_, cmd_vel);
       if (isOk) {
         publishGlobalPlan(transformed_plan);
