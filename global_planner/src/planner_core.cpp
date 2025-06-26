@@ -215,6 +215,7 @@ bool GlobalPlanner::makePlan(const geometry_msgs::PoseStamped& start, const geom
     return makePlan(start, goal, default_tolerance_, plan);
 }
 
+//主要函数
 bool GlobalPlanner::makePlan(const geometry_msgs::PoseStamped& start, const geometry_msgs::PoseStamped& goal,
                            double tolerance, std::vector<geometry_msgs::PoseStamped>& plan) {
     boost::mutex::scoped_lock lock(mutex_);
@@ -290,6 +291,7 @@ bool GlobalPlanner::makePlan(const geometry_msgs::PoseStamped& start, const geom
     if(outline_map_)
         outlineMap(costmap_->getCharMap(), nx, ny, costmap_2d::LETHAL_OBSTACLE);
 
+    //计算势场数组
     bool found_legal = planner_->calculatePotentials(costmap_->getCharMap(), start_x, start_y, goal_x, goal_y,
                                                     nx * ny * 2, potential_array_);
 
@@ -299,7 +301,7 @@ bool GlobalPlanner::makePlan(const geometry_msgs::PoseStamped& start, const geom
         publishPotential(potential_array_);
 
     if (found_legal) {
-        //extract the plan
+        //extract the plan      提取全局路径
         if (getPlanFromPotential(start_x, start_y, goal_x, goal_y, goal, plan)) {
             //make sure the goal we push on has the same timestamp as the rest of the plan
             geometry_msgs::PoseStamped goal_copy = goal;
@@ -312,7 +314,7 @@ bool GlobalPlanner::makePlan(const geometry_msgs::PoseStamped& start, const geom
         ROS_ERROR_THROTTLE(5.0, "Failed to get a plan.");
     }
 
-    // add orientations if needed
+    // add orientations if needed       给路径添加方向
     orientation_filter_->processPath(start, plan);
 
     //publish the plan for visualization purposes
@@ -358,13 +360,14 @@ bool GlobalPlanner::getPlanFromPotential(double start_x, double start_y, double 
     plan.clear();
 
     std::vector<std::pair<float, float> > path;
-
+    //提取路径，如果前面use_grid_path为真就会调用grid_path.cpp的getPath，否则会调用GradientPath.cpp的getPath
     if (!path_maker_->getPath(potential_array_, start_x, start_y, goal_x, goal_y, path)) {
         ROS_ERROR("NO PATH!");
         return false;
     }
 
     ros::Time plan_time = ros::Time::now();
+    //路径是从终点到起点的，所以需要反转,构造 ROS 格式的路径点
     for (int i = path.size() -1; i>=0; i--) {
         std::pair<float, float> point = path[i];
         //convert the plan to world coordinates
