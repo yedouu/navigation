@@ -57,7 +57,7 @@ void SimpleTrajectoryGenerator::initialise(
 }
 
 
-void SimpleTrajectoryGenerator::initialise(
+void SimpleTrajectoryGenerator::initialise(   //生成所有可能的速度组合，这些组合就存在 sample_params_ 向量中
     const Eigen::Vector3f& pos,
     const Eigen::Vector3f& vel,
     const Eigen::Vector3f& goal,
@@ -156,7 +156,7 @@ bool SimpleTrajectoryGenerator::hasMoreTrajectories() {
 }
 
 /**
- * Create and return the next sample trajectory
+ * Create and return the next sample trajectory   轨迹生成函数
  */
 bool SimpleTrajectoryGenerator::nextTrajectory(Trajectory &comp_traj) {
   bool result = false;
@@ -177,13 +177,14 @@ bool SimpleTrajectoryGenerator::nextTrajectory(Trajectory &comp_traj) {
  * @param pos current position of robot
  * @param vel desired velocity for sampling
  */
-bool SimpleTrajectoryGenerator::generateTrajectory(
+bool SimpleTrajectoryGenerator::generateTrajectory(   //轨迹生成的核心函数
       Eigen::Vector3f pos,
       Eigen::Vector3f vel,
       Eigen::Vector3f sample_target_vel,
       base_local_planner::Trajectory& traj) {
   double vmag = hypot(sample_target_vel[0], sample_target_vel[1]);
   double eps = 1e-4;
+  //初始化代价和轨迹
   traj.cost_   = -1.0; // placed here in case we return early
   //trajectory might be reused so we'll make sure to reset it
   traj.resetPoints();

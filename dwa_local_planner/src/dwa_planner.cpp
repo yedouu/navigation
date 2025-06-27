@@ -292,7 +292,7 @@ namespace dwa_local_planner {
 
 
   /*
-   * given the current state of the robot, find a good trajectory
+   * given the current state of the robot, find a good trajectory   核心函数
    */
   base_local_planner::Trajectory DWAPlanner::findBestPath(
       const geometry_msgs::PoseStamped& global_pose,
@@ -308,15 +308,15 @@ namespace dwa_local_planner {
     Eigen::Vector3f goal(goal_pose.pose.position.x, goal_pose.pose.position.y, tf2::getYaw(goal_pose.pose.orientation));
     base_local_planner::LocalPlannerLimits limits = planner_util_->getCurrentLimits();
 
-    // prepare cost functions and generators for this run
+    // prepare cost functions and generators for this run   初始化轨迹采样器
     generator_.initialise(pos,
         vel,
         goal,
         &limits,
         vsamples_);
 
-    result_traj_.cost_ = -7;
-    // find best trajectory by sampling and scoring the samples
+    result_traj_.cost_ = -7;    // 默认轨迹非法
+    // find best trajectory by sampling and scoring the samples   对采样器生成的每条轨迹进行模拟并打分
     std::vector<base_local_planner::Trajectory> all_explored;
     scored_sampling_planner_.findBestTrajectory(result_traj_, &all_explored);
 

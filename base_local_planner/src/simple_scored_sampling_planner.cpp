@@ -84,6 +84,7 @@ namespace base_local_planner {
     double loop_traj_cost, best_traj_cost = -1;
     bool gen_success;
     int count, count_valid;
+    //调用每个打分器的 prepare()
     for (std::vector<TrajectoryCostFunction*>::iterator loop_critic = critics_.begin(); loop_critic != critics_.end(); ++loop_critic) {
       TrajectoryCostFunction* loop_critic_p = *loop_critic;
       if (loop_critic_p->prepare() == false) {
@@ -91,24 +92,25 @@ namespace base_local_planner {
         return false;
       }
     }
-
+    //遍历一组“轨迹生成器”。每个生成器可以生成一堆轨迹（比如不同速度、角速度的组合）
     for (std::vector<TrajectorySampleGenerator*>::iterator loop_gen = gen_list_.begin(); loop_gen != gen_list_.end(); ++loop_gen) {
       count = 0;
       count_valid = 0;
       TrajectorySampleGenerator* gen_ = *loop_gen;
+      //开始一个个生成轨迹
       while (gen_->hasMoreTrajectories()) {
-        gen_success = gen_->nextTrajectory(loop_traj);
+        gen_success = gen_->nextTrajectory(loop_traj);  //得到一条轨迹，存到 loop_traj 中
         if (gen_success == false) {
           // TODO use this for debugging
           continue;
         }
-        loop_traj_cost = scoreTrajectory(loop_traj, best_traj_cost);
-        if (all_explored != NULL) {
+        loop_traj_cost = scoreTrajectory(loop_traj, best_traj_cost);  //给当前轨迹打分
+        if (all_explored != NULL) {   //如果设置了 all_explored，就记录这个轨迹
           loop_traj.cost_ = loop_traj_cost;
           all_explored->push_back(loop_traj);
         }
 
-        if (loop_traj_cost >= 0) {
+        if (loop_traj_cost >= 0) {  //判断这条轨迹是否是目前最好的
           count_valid++;
           if (best_traj_cost < 0 || loop_traj_cost < best_traj_cost) {
             best_traj_cost = loop_traj_cost;
@@ -116,11 +118,11 @@ namespace base_local_planner {
           }
         }
         count++;
-        if (max_samples_ > 0 && count >= max_samples_) {
+        if (max_samples_ > 0 && count >= max_samples_) {  //轨迹总数超过限制就提前停止
           break;
         }        
       }
-      if (best_traj_cost >= 0) {
+      if (best_traj_cost >= 0) {  //把最优轨迹“复制”到输出参数中
         traj.xv_ = best_traj.xv_;
         traj.yv_ = best_traj.yv_;
         traj.thetav_ = best_traj.thetav_;
