@@ -52,22 +52,22 @@ namespace base_local_planner {
     int gen_id = 0;
     for(std::vector<TrajectoryCostFunction*>::iterator score_function = critics_.begin(); score_function != critics_.end(); ++score_function) {
       TrajectoryCostFunction* score_function_p = *score_function;
-      if (score_function_p->getScale() == 0) {
+      if (score_function_p->getScale() == 0) {  //跳过权重为 0 的函数
         continue;
       }
       double cost = score_function_p->scoreTrajectory(traj);
-      if (cost < 0) {
+      if (cost < 0) { //如果 cost 为负值，说明轨迹非法
         ROS_DEBUG("Velocity %.3lf, %.3lf, %.3lf discarded by cost function  %d with cost: %f", traj.xv_, traj.yv_, traj.thetav_, gen_id, cost);
         traj_cost = cost;
         break;
       }
-      if (cost != 0) {
+      if (cost != 0) {  //加权求和代价
         cost *= score_function_p->getScale();
       }
       traj_cost += cost;
       if (best_traj_cost > 0) {
         // since we keep adding positives, once we are worse than the best, we will stay worse
-        if (traj_cost > best_traj_cost) {
+        if (traj_cost > best_traj_cost) { //代价剪枝：比当前最优轨迹差，提前退出
           break;
         }
       }

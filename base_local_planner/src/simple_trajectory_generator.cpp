@@ -67,16 +67,18 @@ void SimpleTrajectoryGenerator::initialise(   //生成所有可能的速度组�
   /*
    * We actually generate all velocity sample vectors here, from which to generate trajectories later on
    */
+  // 最大角速度、最小角速度
   double max_vel_th = limits->max_vel_theta;
   double min_vel_th = -1.0 * max_vel_th;
-  discretize_by_time_ = discretize_by_time;
-  Eigen::Vector3f acc_lim = limits->getAccLimits();
+  discretize_by_time_ = discretize_by_time; // 是否按时间离散轨迹段
+  Eigen::Vector3f acc_lim = limits->getAccLimits(); // 获取最大加速度限制
   pos_ = pos;
   vel_ = vel;
   limits_ = limits;
   next_sample_index_ = 0;
   sample_params_.clear();
 
+  // 提取 X、Y速度的最大最小值限制
   double min_vel_x = limits->min_vel_x;
   double max_vel_x = limits->max_vel_x;
   double min_vel_y = limits->min_vel_y;
@@ -85,26 +87,30 @@ void SimpleTrajectoryGenerator::initialise(   //生成所有可能的速度组�
   // if sampling number is zero in any dimension, we don't generate samples generically
   if (vsamples[0] * vsamples[1] * vsamples[2] > 0) {
     //compute the feasible velocity space based on the rate at which we run
+    // 定义三个维度的最大最小速度向量
     Eigen::Vector3f max_vel = Eigen::Vector3f::Zero();
     Eigen::Vector3f min_vel = Eigen::Vector3f::Zero();
 
     if ( ! use_dwa_) {
       // there is no point in overshooting the goal, and it also may break the
       // robot behavior, so we limit the velocities to those that do not overshoot in sim_time
-      double dist = hypot(goal[0] - pos[0], goal[1] - pos[1]);
-      max_vel_x = std::max(std::min(max_vel_x, dist / sim_time_), min_vel_x);
+      double dist = hypot(goal[0] - pos[0], goal[1] - pos[1]);  // 计算当前点到目标点的直线距离
+      max_vel_x = std::max(std::min(max_vel_x, dist / sim_time_), min_vel_x); // 限制最大速度，防止 overshoot（超过目标点）
       max_vel_y = std::max(std::min(max_vel_y, dist / sim_time_), min_vel_y);
 
       // if we use continous acceleration, we can sample the max velocity we can reach in sim_time_
+      // 根据最大加速度推算 sim_time_ 时间内能达到的最大速度（连续加速）
       max_vel[0] = std::min(max_vel_x, vel[0] + acc_lim[0] * sim_time_);
       max_vel[1] = std::min(max_vel_y, vel[1] + acc_lim[1] * sim_time_);
       max_vel[2] = std::min(max_vel_th, vel[2] + acc_lim[2] * sim_time_);
 
+      // 同理，计算最小速度（向负方向的加速）
       min_vel[0] = std::max(min_vel_x, vel[0] - acc_lim[0] * sim_time_);
       min_vel[1] = std::max(min_vel_y, vel[1] - acc_lim[1] * sim_time_);
       min_vel[2] = std::max(min_vel_th, vel[2] - acc_lim[2] * sim_time_);
     } else {
       // with dwa do not accelerate beyond the first step, we only sample within velocities we reach in sim_period
+      // DWA 模式，只考虑 sim_period_ 内的运动，速度范围更窄
       max_vel[0] = std::min(max_vel_x, vel[0] + acc_lim[0] * sim_period_);
       max_vel[1] = std::min(max_vel_y, vel[1] + acc_lim[1] * sim_period_);
       max_vel[2] = std::min(max_vel_th, vel[2] + acc_lim[2] * sim_period_);
@@ -115,9 +121,11 @@ void SimpleTrajectoryGenerator::initialise(   //生成所有可能的速度组�
     }
 
     Eigen::Vector3f vel_samp = Eigen::Vector3f::Zero();
+    // 使用 VelocityIterator 在每个维度上生成均匀间隔的速度值
     VelocityIterator x_it(min_vel[0], max_vel[0], vsamples[0]);
     VelocityIterator y_it(min_vel[1], max_vel[1], vsamples[1]);
     VelocityIterator th_it(min_vel[2], max_vel[2], vsamples[2]);
+    // 三重循环组合所有可能的速度向量样本
     for(; !x_it.isFinished(); x_it++) {
       vel_samp[0] = x_it.getVelocity();
       for(; !y_it.isFinished(); y_it++) {
@@ -236,12 +244,12 @@ bool SimpleTrajectoryGenerator::generateTrajectory(   //轨迹生成的核心函
   }
 
   //simulate the trajectory and check for collisions, updating costs along the way
-  for (int i = 0; i < num_steps; ++i) {
+  for (int i = 0; i < num_steps; ++i) { //模拟机器人未来轨迹,给出一个 (x, y, θ) 的序列
 
     //add the point to the trajectory so we can draw it later if we want
     traj.addPoint(pos[0], pos[1], pos[2]);
 
-    if (continued_acceleration_) {
+    if (continued_acceleration_) {  //如果考虑加速度，计算新的速度
       //calculate velocities
       loop_vel = computeNewVelocities(sample_target_vel, loop_vel, limits_->getAccLimits(), dt);
       //ROS_WARN_NAMED("Generator", "Flag: %d, Loop_Vel %f, %f, %f", continued_acceleration_, loop_vel[0], loop_vel[1], loop_vel[2]);
@@ -255,6 +263,7 @@ bool SimpleTrajectoryGenerator::generateTrajectory(   //轨迹生成的核心函
   return true; // trajectory has at least one point
 }
 
+//位姿积分
 Eigen::Vector3f SimpleTrajectoryGenerator::computeNewPositions(const Eigen::Vector3f& pos,
     const Eigen::Vector3f& vel, double dt) {
   Eigen::Vector3f new_pos = Eigen::Vector3f::Zero();

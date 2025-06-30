@@ -56,17 +56,17 @@ namespace base_local_planner {
           num_samples = std::max(2, num_samples);
 
           // e.g. for 4 samples, split distance in 3 even parts
-          double step_size = (max - min) / double(std::max(1, (num_samples - 1)));
+          double step_size = (max - min) / double(std::max(1, (num_samples - 1)));  //计算步长
 
           // we make sure to avoid rounding errors around min and max.
           double current;
           double next = min;
-          for (int j = 0; j < num_samples - 1; ++j) {
+          for (int j = 0; j < num_samples - 1; ++j) {   //循环生成采样点
             current = next;
             next += step_size;
             samples_.push_back(current);
             // if 0 is among samples, this is never true. Else it inserts a 0 between the positive and negative samples
-            if ((current < 0) && (next > 0)) {
+            if ((current < 0) && (next > 0)) {  //插入 0.0 意味着允许机器人静止，是一种非常重要的“行为候选”
               samples_.push_back(0.0);
             }
           }
